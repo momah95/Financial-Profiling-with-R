@@ -1,0 +1,349 @@
+---
+title: "Financial Profiling"
+author: "Somto Momah"
+date: "5/13/2020"
+output: html_document
+---
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+#load packages needed
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse) ## manipulating and visualizing data (plyr, purrr, ggplot2, knitr...)
+library(readr) ## read in csv files faster
+library(kableExtra) ## make nice tables with wrapper for kable()
+library(cluster)    ## clustering algorithms and gap statistic
+library(factoextra) ## visualization of clustering algorithm results
+library(GGally) ## create matrix of variable plots
+library(NbClust) ## clustering algorithms and identification of best K
+library(caret) ## find correlated variables
+library(fpc) #for computing clustering validation statistics
+```
+
+#loading and viewing the data
+```{r}
+data <- read.csv('CC GENERAL.csv')
+View(data)
+```
+
+#descriptive statistics
+```{r}
+summary(data)
+```
+
+```{r}
+str(data)
+```
+
+#check for missing values
+```{r}
+#unique (unlist (lapply (data, function (data) which (is.na (data)))))
+sum(is.na(data))
+```
+
+#EDA
+
+```{r}
+#checking for pairs
+pairs(data[,2:11])
+```
+
+```{r, message = FALSE, warning = FALSE}
+#box plot for each attribute
+data <- data[,-1]
+data %>%
+  gather(Attributes, values, c(1:4, 6:12)) %>%
+  ggplot(aes(x=reorder(Attributes, values, FUN=median), y=values, fill=Attributes)) +
+  geom_boxplot(show.legend=FALSE) +
+  labs(title="Credit Card Attributes - Boxplots") +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.title.x=element_blank()) +
+  ylim(0, 35) +
+  coord_flip()
+
+```
+
+```{r, message = FALSE, warning = FALSE}
+# Historgram for each attribute
+data %>% 
+  gather(Attributes, value, 1:17) %>% 
+  ggplot(aes(x=value)) +
+  geom_histogram(fill = "lightblue2", color = "black") + 
+  facet_wrap(~Attributes, scales = "free_x") +
+  labs(x = "Value", y = "Frequency",
+      title="Credit Cards Attributes - Histograms") +
+theme_bw()
+```
+
+```{r, message = FALSE, warning = FALSE}
+#variables to be log transformed because of skewness
+transformed_variables <- c('BALANCE','PURCHASES','ONEOFF_PURCHASES','INSTALLMENTS_PURCHASES','CASH_ADVANCE','CASH_ADVANCE_TRX','PURCHASES_TRX','CREDIT_LIMIT','PAYMENTS','MINIMUM_PAYMENTS')
+
+#data with 1 year tenure
+new_data <- data %>% 
+  filter(TENURE==12) %>%
+  .[,-c(18)] %>%
+  na.omit() %>%
+  mutate_at(vars(transformed_variables), funs(log(1 + .))) %>%
+  mutate_at(c(2:17), funs(c(scale(.))))
+
+View(new_data)
+
+View(new_data)
+#data with all tenures
+new_data2 <- data %>% 
+  na.omit() %>%
+  mutate_at(vars(transformed_variables), funs(log(1 + .))) %>%
+  mutate_at(c(2:18), funs(c(scale(.))))
+
+
+#write.csv(new_data, 'cleaned_data.csv')
+#write.csv(new_data2, 'cleaned_data2.csv')
+
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+#correlation plot
+plots <- as.data.frame(new_data[,-c(1)]) %>%
+  gather() %>%
+  ggplot(aes(value)) + 
+  facet_wrap(~ key, scales = 'free') +
+  geom_density() +
+  theme(strip.text = element_text(size=5))
+
+plots
+
+
+corr_plots <-  ggpairs(as.data.frame(new_data[,c(2:11)]),
+                       lower = list(continuous = wrap('points',
+                                                     alpha = 0.3, size = 0.1),
+                                    combo = wrap('dot', alpha = 0.4, size = 0.2)
+                                    )
+                       )
+
+
+corr_plots
+
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+# Relationship between Balance and Cash Advance
+ggplot(data, aes(x=BALANCE, y=CASH_ADVANCE)) +
+  geom_point() +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(title="Credit Cards Attributes",
+       subtitle="Relationship between Balance and Cash Advance") +
+  theme_bw()
+```
+
+
+
+```{r, message = FALSE, warning = FALSE}
+# Original data
+p1 <- ggplot(data, aes(x=CREDIT_LIMIT, y=BALANCE)) +
+  geom_point() +
+  labs(title="Original data") +
+  theme_bw()
+
+# Normalized data 
+p2 <- ggplot(new_data, aes(x=CREDIT_LIMIT, y=BALANCE)) +
+  geom_point() +
+  labs(title="Normalized data") +
+  theme_bw()
+
+# Subplot
+grid.arrange(p1, p2, ncol=2)
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+corr_values <- cor(new_data[,-1])
+
+corr_values %>%
+  as.data.frame() %>%
+  kable(digits = 3) %>%
+  kable_styling(font_size = 9)
+
+above_cutoff <- findCorrelation(corr_values,
+                                names = TRUE,
+                                cutoff = 0.6)
+
+
+reduced_data <- new_data %>%
+  column_to_rownames('CUST_ID') %>%
+  select(-one_of(above_cutoff))
+
+cbind(names(reduced_data), above_cutoff) %>%
+  kable(col.names = c('Variables Retained', 'Variables Removed')) %>%
+          kable_styling(font_size = 9, full_width = FALSE)
+```
+
+#PCA
+```{r, message = FALSE, warning = FALSE}
+res.pca <- prcomp(reduced_data, scale = TRUE)
+#visualize eigenvalues/variances
+fviz_screeplot(res.pca, addlabels = TRUE, ylim = c(0,50))
+```
+```{r}
+# Extract the results for variables
+var <- get_pca_var(res.pca)
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+# Contributions of variables to PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+# Control variable colors using their contributions to the principle axis
+fviz_pca_var(res.pca, col.var="contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping
+             ) + theme_minimal() + ggtitle("Variables - PCA")
+```
+```{r}
+res.nbclust <- NbClust(reduced_data, distance = "euclidean",
+                  min.nc = 2, max.nc = 9, 
+                  method = "complete", index ="all")
+factoextra::fviz_nbclust(res.nbclust) + theme_minimal() + ggtitle("NbClust's optimal number of clusters")
+```
+
+#KMeans Clistering
+```{r}
+set.seed(96743)
+
+k <- kmeans(reduced_data, centers = 4, nstart = 25)
+
+View(k$centers)
+```
+
+```{r}
+clusplot(reduced_data, k$cluster, color = TRUE, shade = TRUE, labels = 4, lines = 0, main = 'K-means cluster plot' )
+```
+```{r}
+k$size
+```
+
+#Determinig Optimal Clusters
+```{r}
+#Elbow Method
+
+# elbow_method <- (nrow(new_data)-1)*sum(apply(new_data,2,var))
+# 
+# elbow_method
+# 
+# for (i in 2:15){
+#   elbow_method[i] <- sum(kmeans(new_data, centers = i)$tot.withinss)
+# }
+# 
+# plot(1:15, elbow_method, type='b', pch = 19, frame = FALSE, xlab = 'Number of Clusters', ylab = 'Within groups sum of squares')
+
+#fviz_cluster(seg.k, data = reduced_data)
+
+fviz_nbclust(reduced_data, kmeans, method = 'wss') + geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = 'Elbow Method')
+```
+
+
+```{r}
+#Silhouette Method
+
+#function to get average silhouette for k clusters
+avg_sil <- function(k) {
+  km.res <- kmeans(reduced_data, centers = k, nstart = 25, iter.max = 50)
+  ss <- silhouette(km.res$cluster, dist(reduced_data))
+  mean(ss[,3])
+}
+
+#compute and plot wss for k = 2 to k = 15
+k.values <- 2:15
+
+#extract avg silhouette for 2-15 clussters
+avg_sil_values <- map_dbl(k.values, avg_sil)
+
+plot(k.values, avg_sil_values, type = 'b', pch = 19, frame = FALSE, xlab = 'Number of clusters K', ylab = 'Average Silhouettes')
+```
+
+```{r}
+fviz_nbclust(reduced_data, kmeans, method = 'silhouette')
+```
+
+```{r}
+#GAP Statistics
+gapK <- clusGap(reduced_data, kmeans, nstart = 50, iter.max = 100, d.power = 2, K.max = 100, B = 150)
+
+plot(gapK, main = 'gap K-means')
+```
+
+
+```{r}
+set.seed(123)
+gap_stat <- clusGap(reduced_data, FUN = kmeans, nstart = 25, iter.max = 50, K.max = 10, B = 100)
+fviz_gap_stat(gap_stat)
+```
+
+```{r}
+NbClust(data = reduced_data, distance = 'euclidean', min.nc = 2, max.nc = 15, method = 'kmeans')
+```
+
+
+RESULTS
+```{r}
+#Execution of k-means with k=5
+set.seed(1234)
+
+seg.k5 <- kmeans(reduced_data, centers = 5)
+
+
+#Mean values of each cluster
+aggregate(reduced_data, by = list(seg.k5$cluster), mean)
+```
+
+```{r}
+seg.k5$size
+```
+
+```{r, message = FALSE, warning = FALSE}
+#Clustering
+ggpairs(cbind(new_data, Cluster = as.factor(seg.k5$cluster)),
+        columns = 2:6, aes(colour = Cluster, alpha = 0.5),
+        lower = list(continuous = 'points'),
+        upper = list(continuous = 'blank'),
+        axisLabels = 'none', switch = 'both') +
+  theme_bw()
+```
+
+```{r}
+seg.k5
+```
+
+```{r}
+fviz_cluster(seg.k5, data = reduced_data)
+```
+ 
+ 
+```{r}
+cc_withclusters <- mutate(new_data, seg.k5$cluster)
+View(cc_withclusters)
+count(cc_withclusters, seg.k5$cluster)
+```
+ 
+ #USER GROUPS
+ 1- Frugal user group w/ money: This is the group with the highest cash. They generally like to trade with cash advance. They pay attention to their balances and expenses at the bank. This group makes the highest payment in terms of reimbursement. Marketing transactions can be carried out in order to ensure that the transactions made in cash are returned to the credit card.
+ 
+2- Balanced middle-class user group: Users in this group are really big on installment purchases more than one-time.They purchase a lot. They have an average credit limit. This group hardly purchases with cash (they use their credit card more that others).More promos around installmental payments with credit card would do the trick for this group.
+
+3- Subclass user group: They are the users with the lowest cash. Credit limits are also low. They don't buy often. They do not perform banking transactions too much and their balances are not updated frequently. They represent the smallest user group.
+
+4- Big expenditure Group: It is the third user group with the highest cash. They make expensive purchases and have the second highest credit limit. They represent the second largest group. Loyalty bank applications can be implemented to increase spending. 
+
+5- Small Spending and User Group with the Lowest Credit Limit: These users are included in the group with the lowest credit limit, but they do not buy too much. They are the largest customer group.
+ 
+
+
+
+
+
+
+
